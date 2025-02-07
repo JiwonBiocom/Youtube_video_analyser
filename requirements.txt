@@ -4,7 +4,7 @@ pandas
 python-dotenv
 langchain
 langchain-community
-faiss-cpu pypdf
+faiss-cpu-pypdf
 sentence-transformers
 torch
 openai
