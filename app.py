@@ -19,6 +19,19 @@ from langchain_community.vectorstores import FAISS
 # Load environment variables
 load_dotenv()
 
+# 앱 설정
+st.set_page_config(
+    page_title="Your App",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
+)
+
 # Configure API keys
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
