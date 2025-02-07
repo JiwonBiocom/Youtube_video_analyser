@@ -1,5 +1,0 @@
-pip3 install streamlit google-api-python-client anthropic pandas python-dotenv
-pip3 install langchain langchain-community faiss-cpu pypdf sentence-transformers torch
-pip3 install openai
-pip3 install youtube-transcript-api
-pip3 install PyPDF2

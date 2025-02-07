@@ -1,0 +1,13 @@
+streamlit
+google-api-python-client
+anthropic
+pandas
+python-dotenv
+langchain
+langchain-community
+faiss-cpu pypdf
+sentence-transformers
+torch
+openai
+youtube-transcript-api
+PyPDF2
