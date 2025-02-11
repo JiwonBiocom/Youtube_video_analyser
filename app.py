@@ -9,8 +9,7 @@ from dotenv import load_dotenv
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
-# import openai
-from anthropic import Anthropic
+import openai
 from langchain_community.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings  
