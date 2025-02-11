@@ -21,25 +21,25 @@ load_dotenv()
 
 # 앱 설정
 st.set_page_config(
-    page_title="Your App",
+    page_title="Youtube video analyser",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
         'Get Help': None,
-        'Report a bug': None,
+        'Report a bug': None, 
         'About': None
     }
 )
 
 # Configure API keys
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
-# OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 # Initialize APIs
 youtube = googleapiclient.discovery.build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-anthropic = Anthropic(api_key=CLAUDE_API_KEY)
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # YouTube Transcript API로 스크립트로 요약
 def youtube_transcript(video_id):
@@ -143,7 +143,8 @@ def analyze_with_llm(df, query, context=None):
     # RAG로 불러온 context가 있는 경우 프롬프트에 추가
     rag_context = f"\n\nPDF 문서 관련 컨텍스트:\n{context}" if context else ""
     
-    prompt = f"""다음은 YouTube 검색 결과 데이터 분석을 위한 정보입니다:
+    prompt = f"""당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다.
+다음은 YouTube 검색 결과 데이터 분석을 위한 정보입니다:
 검색어: {query}
 총 영상 수: {len(df)}
 
@@ -151,7 +152,7 @@ def analyze_with_llm(df, query, context=None):
 {data_summary}
 {rag_context}
 
-다음 사항들을 고려하여 종합적인 분석을 제공해주세요:
+다음 사항들을 고려하여 입력된 키워드를 주제로한 동영상 제목과 스크립트를 추천해주세요:
 1. 조회수, 좋아요, 댓글 수의 전반적인 트렌드
 2. 가장 인기 있는 영상들의 공통점
 3. 주요 채널들과 그들의 컨텐츠 특징
@@ -165,31 +166,29 @@ def analyze_with_llm(df, query, context=None):
 - 최다 조회수: {df['views'].max():,}
 - 최다 좋아요: {df['likes'].max():,}"""
     
-    # Anthropic 사용
-    message = anthropic.messages.create(
-        model="claude-3-opus-20240229", 
-        max_tokens=1000,
-        temperature=0.7,
-        system="당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다.",
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }]
-    )
+    try:
+        message = client.chat.completions.create(
+            model='o1-mini', 
+            messages=[
+                # {'role': 'system', 'content': "당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다."}, 
+                {'role': 'user', 'content': prompt}
+            ], 
+            max_completion_tokens=3000,  # max_tokens=1000, 
+            # temperature=0.7, 
+        )
+
+        print('API 응답:', message)
+        
+        if message:
+            return message.choices[0].message.content
+        else:
+            print("API 응답이 비어있습니다.")
+            return None
     
-    # # OpenAI 사용
-    # client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    # message = client.chat.completions.create(
-    #     model='o3-mini', 
-    #     messages=[
-    #         {'role': 'system', 'content': "당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다."}, 
-    #         {'role': 'user', 'content': prompt}
-    #     ], 
-    #     max_tokens=1000, 
-    #     temperature=0.7, 
-    # )
-    
-    return message.content
+    except Exception as e:
+        print(f"Error calling OpenAI API: {str(e)}")
+        
+        return None
 
 
 # RAG
@@ -215,7 +214,7 @@ def load_pdf(file_stream):
     return documents
 
 def rag(documents):
-    embeddings = HuggingFaceEmbeddings()  # embeddings = OpenAIEmbeddings()
+    embeddings = HuggingFaceEmbeddings()
     vectorstore = FAISS.from_documents(documents=documents, embedding=embeddings)
 
     return vectorstore
@@ -288,7 +287,7 @@ def main():
                 # 썸네일에 링크 추가
                 top_videos['thumbnail'] = top_videos.apply(lambda x: f'<a href="{x["url"]}" target="_blank"><img src="{x["thumbnail"]}" width="240"/></a>', axis=1)
                 # top_videos['thumbnail'] = top_videos['thumbnail'].apply(lambda x: x)
-                
+
                 # 보여줄 컬럼 선택 및 이름 변경 (링크 열 제외)
                 display_videos = top_videos[['thumbnail', 'title', 'channel', 'views', 'subscribers', 'view_sub_ratio', '1min_script']]
                 display_videos.columns = ['썸네일', '제목', '채널명', '조회수', '구독자수', '조회수/구독자 비율', '최초 1분 스크립트']
@@ -296,6 +295,25 @@ def main():
                 # HTML을 허용하는 방식으로 데이터프레임 표시
                 st.markdown(display_videos.to_html(escape=False, index=False), unsafe_allow_html=True)
                 # st.dataframe(display_videos, hide_index=True)  # 좌우 스크롤 가능. 단, 썸네일 이미지 표시 불가.
+                # st.dataframe(
+                #     display_videos,
+                #     hide_index=True,
+                #     column_config={
+                #         "썸네일": st.column_config.ImageColumn(
+                #             "썸네일",
+                #             help="클릭하면 영상으로 이동합니다",
+                #             width="medium"
+                #         ),
+                #         "제목": st.column_config.TextColumn(
+                #             "제목",
+                #             width="medium"
+                #         ),
+                #         "최초 1분 스크립트": st.column_config.TextColumn(
+                #             "최초 1분 스크립트",
+                #             width="large"
+                #         )
+                #     }
+                # )
                 
                 # Engagement rate calculation
                 df['engagement_rate'] = (df['likes'] + df['comments']) / df['views'] * 100
@@ -311,7 +329,8 @@ def main():
                 # Claude Analysis
                 st.subheader("🤖 Claude AI 분석 리포트")
                 analysis = analyze_with_llm(df, search_query, context)  # 분석!
-                st.markdown(analysis[0].text)
+                st.markdown(analysis)
+                print('analysis:\n', analysis)
                 
                 # Data visualization
                 st.subheader("📊 데이터 시각화")
