@@ -6,10 +6,12 @@ import os
 from io import BytesIO
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
+import requests
+import requests_cache
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
-import openai
+from openai import OpenAI
 from langchain_community.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings  
@@ -34,11 +36,23 @@ st.set_page_config(
 # Configure API keys
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-# CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 # Initialize APIs
 youtube = googleapiclient.discovery.build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# 캐시 초기화 (예: 10분 TTL)
+requests_cache.install_cache('openai_cache', expire_after=600)
+
+# 유튜브 쇼츠인지 아닌지 구분
+def is_youtubeshorts(video_id):
+    url = 'https://www.youtube.com/shorts/' + video_id
+    req = requests.head(url)
+    
+    if req.status_code == 200:
+        return True
+    else:
+        return False
 
 # YouTube Transcript API로 스크립트로 요약
 def youtube_transcript(video_id):
@@ -56,14 +70,6 @@ def youtube_transcript(video_id):
         return ' '.join(first_minute)
     except:
         return ''
-
-# # YouTube Data API v3의 captions 엔드포인트로 요약
-# def get_captions(video_id):
-#     captions_request = youtube.captions().list(
-#         part='snippet',
-#         videoId=video_id
-#     )
-#     return captions_request.execute()
 
 # 유튜브 동영상 기본 정보 불러오기
 def fetch_youtube_data(search_query, max_results=50):
@@ -115,6 +121,9 @@ def fetch_youtube_data(search_query, max_results=50):
 
             # 동영상 스크립트
             script = youtube_transcript(video_id)
+
+            # 쇼츠 여부 확인
+            is_shorts = is_youtubeshorts(video_id)
             
             videos_data.append({
                 'title': video['snippet']['title'], 
@@ -128,7 +137,8 @@ def fetch_youtube_data(search_query, max_results=50):
                 'description': video['snippet']['description'], 
                 'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}", 
                 'thumbnail': video['snippet']['thumbnails']['high']['url'], 
-                '1min_script': script  # 1분 요약 스크립트
+                '1min_script': script,  # 1분 요약 스크립트
+                'is_shorts': is_shorts  # 쇼츠인지 아닌지 구분
             })
     
     return pd.DataFrame(videos_data)
@@ -139,24 +149,33 @@ def analyze_with_llm(df, query, context=None):
     # Prepare data summary for Claude
     data_summary = df.to_string()
     
-    # RAG로 불러온 context가 있는 경우 프롬프트에 추가
-    rag_context = f"\n\nPDF 문서 관련 컨텍스트:\n{context}" if context else ""
-    
     prompt = f"""당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다.
 다음은 YouTube 검색 결과 데이터 분석을 위한 정보입니다:
-검색어: {query}
-총 영상 수: {len(df)}
+1. 검색어: {query}
+2. 총 영상 수: {len(df)}
+3. PDF 문서 핵심 내용: {context if context else ""}  # RAG로 불러온 context가 있는 경우 프롬프트에 추가
 
-데이터:
+- 데이터:
 {data_summary}
-{rag_context}
 
-다음 사항들을 고려하여 입력된 키워드를 주제로한 동영상 제목과 스크립트를 추천해주세요:
-1. 조회수, 좋아요, 댓글 수의 전반적인 트렌드
-2. 가장 인기 있는 영상들의 공통점
-3. 주요 채널들과 그들의 컨텐츠 특징
-4. 검색어와 관련된 콘텐츠 트렌드
-5. 시청자 참여도가 높은 영상의 특징
+다음과 같이 분석해주세요:
+
+1. PDF 문서 내용 기반 분석
+- PDF에서 제시된 주요 개념/주제가 현재 유튜브 영상들에서 어떻게 다뤄지고 있는지
+- PDF 내용과 비교했을 때 현재 유튜브 영상들의 부족한 점이나 차별점
+- PDF 내용을 기반으로 새로운 영상이 다뤄야 할 핵심 주제나 관점
+
+2. 유튜브 데이터 분석
+- 조회수, 좋아요, 댓글 수의 전반적인 트렌드
+- 가장 인기 있는 영상들의 공통점
+- 주요 채널들과 그들의 컨텐츠 특징
+- 시청자 참여도가 높은 영상의 특징
+
+3. 제안사항
+위 분석을 종합하여 다음을 제안해주세요:
+- PDF 내용으로 제작할할 새로운 동영상 제목 3개 추천
+- 각 제목에 대한 처음 2분간 실제 스크립트 작성
+- 기존 인기 영상들의 특징을 반영한 전달 방식 제안
 
 참고할만한 통계:
 - 평균 조회수: {df['views'].mean():,.0f}
@@ -169,14 +188,11 @@ def analyze_with_llm(df, query, context=None):
         message = client.chat.completions.create(
             model='o1-mini', 
             messages=[
-                # {'role': 'system', 'content': "당신은 유튜브 데이터 분석 전문가입니다. 데이터를 기반으로 통찰력 있는 분석을 제공합니다."}, 
                 {'role': 'user', 'content': prompt}
             ], 
-            max_completion_tokens=3000,  # max_tokens=1000, 
-            # temperature=0.7, 
+            max_completion_tokens=3000, 
         )
-
-        print('API 응답:', message)
+        # print('API 응답:', message)
         
         if message:
             return message.choices[0].message.content
@@ -288,31 +304,13 @@ def main():
                 # top_videos['thumbnail'] = top_videos['thumbnail'].apply(lambda x: x)
 
                 # 보여줄 컬럼 선택 및 이름 변경 (링크 열 제외)
-                display_videos = top_videos[['thumbnail', 'title', 'channel', 'views', 'subscribers', 'view_sub_ratio', '1min_script']]
-                display_videos.columns = ['썸네일', '제목', '채널명', '조회수', '구독자수', '조회수/구독자 비율', '최초 1분 스크립트']
+                display_videos = top_videos[['thumbnail', 'title', 'channel', 'views', 'subscribers', 'view_sub_ratio', 'is_shorts', '1min_script']]
+                display_videos.columns = ['썸네일', '제목', '채널명', '조회수', '구독자수', '조회수/구독자 비율', '쇼츠', '최초 1분 스크립트']
+
+                display_videos['쇼츠'] = display_videos['쇼츠'].map({True: '쇼츠', False: '롱폼'})
 
                 # HTML을 허용하는 방식으로 데이터프레임 표시
                 st.markdown(display_videos.to_html(escape=False, index=False), unsafe_allow_html=True)
-                # st.dataframe(display_videos, hide_index=True)  # 좌우 스크롤 가능. 단, 썸네일 이미지 표시 불가.
-                # st.dataframe(
-                #     display_videos,
-                #     hide_index=True,
-                #     column_config={
-                #         "썸네일": st.column_config.ImageColumn(
-                #             "썸네일",
-                #             help="클릭하면 영상으로 이동합니다",
-                #             width="medium"
-                #         ),
-                #         "제목": st.column_config.TextColumn(
-                #             "제목",
-                #             width="medium"
-                #         ),
-                #         "최초 1분 스크립트": st.column_config.TextColumn(
-                #             "최초 1분 스크립트",
-                #             width="large"
-                #         )
-                #     }
-                # )
                 
                 # Engagement rate calculation
                 df['engagement_rate'] = (df['likes'] + df['comments']) / df['views'] * 100
