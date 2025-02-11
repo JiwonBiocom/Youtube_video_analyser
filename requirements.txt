@@ -12,3 +12,4 @@ torch
 openai
 youtube-transcript-api
 PyPDF2
+requests-cache
