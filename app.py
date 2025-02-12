@@ -57,18 +57,68 @@ def is_youtubeshorts(video_id):
 # YouTube Transcript API로 스크립트로 요약
 def youtube_transcript(video_id):
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ko'])
-        first_minute = []
-        current_time = 0
+        # 사용 가능한 자막 목록 확인
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        for line in transcript:
-            if current_time > 180:  # 60초 = 1분
-                break
-            first_minute.append(line['text'])
-            current_time += line['duration']
+        # 디버깅을 위해 사용 가능한 모든 자막 출력
+        print(f"\n영상 ID {video_id}의 사용 가능한 자막 목록:")
+        for transcript in transcript_list:
+            print(f"- {transcript.language} ({transcript.language_code}): {'자동 생성' if transcript.is_generated else '수동 생성'}")
+        
+        transcript = None
+        transcript_data = None
+        
+        # 순차적으로 자막 시도
+        try:
+            # 1. 수동 한국어 자막
+            transcript = transcript_list.find_manually_created_transcript(['ko'])
+            print('수동 생성 한국어 자막을 불러왔습니다.')
+        except:
+            try:
+                # 2. 자동 생성 한국어 자막
+                transcript = transcript_list.find_generated_transcript(['ko'])
+                print('자동 생성 한국어 자막을 불러왔습니다.')
+            except:
+                try:
+                    # 3. 다른 형식의 한국어 자막
+                    for t in transcript_list:
+                        if t.language_code.startswith('ko'):
+                            transcript = t
+                            print(f'한국어 자막을 찾았습니다: {t.language_code} ({"자동 생성" if t.is_generated else "수동 생성"})')
+                            break
+                except:
+                    print('한국어 자막을 찾을 수 없습니다.')
+                    return ''
+        
+        if transcript:
+            try:
+                # 자막 텍스트 추출
+                transcript_data = transcript.fetch()
+                first_minute = []
+                current_time = 0
+                
+                for line in transcript_data:
+                    if current_time > 180:  # 180초 = 3분
+                        break
+                    first_minute.append(line['text'])
+                    current_time += line['duration']
+                
+                result = ' '.join(first_minute)
+                if result:
+                    print(f'성공적으로 {current_time:.1f}초 분량의 자막을 추출했습니다.')
+                    return result
+                else:
+                    print('자막은 찾았으나 내용이 비어있습니다.')
+                    return ''
+            except Exception as e:
+                print(f'자막 추출 중 오류 발생: {str(e)}')
+                return ''
+        else:
+            print('사용 가능한 자막을 찾지 못했습니다.')
+            return ''
             
-        return ' '.join(first_minute)
-    except:
+    except Exception as e:
+        print(f'스크립트를 불러오는 중 오류가 발생했습니다: {str(e)}')
         return ''
 
 # 유튜브 동영상 기본 정보 불러오기
