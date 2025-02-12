@@ -190,7 +190,7 @@ def analyze_with_llm(df, query, context=None):
             messages=[
                 {'role': 'user', 'content': prompt}
             ], 
-            max_completion_tokens=3000, 
+            max_completion_tokens=10000, 
         )
         # print('API 응답:', message)
         
